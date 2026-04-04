@@ -146,7 +146,9 @@ class VoiceDesktopApp(QObject):
     def run(self) -> int:
         self.tray.show()
         self.tray.set_status("Loading models...")
-        self.tray.showMessage(APP_NAME, "Loading models, please wait...", self.tray.icon())
+
+        # Show loading capsule immediately
+        self.capsule.show_loading("Loading TTS model...")
 
         self._load_thread = threading.Thread(target=self._load_models, daemon=True)
         self._load_thread.start()
@@ -155,6 +157,7 @@ class VoiceDesktopApp(QObject):
 
     def _load_models(self):
         self.tts_engine.load()
+        self._invoke_on_main(lambda: self.capsule.update_loading("Loading ASR model..."))
         self.asr_engine.load()
 
     @pyqtSlot()
@@ -182,6 +185,8 @@ class VoiceDesktopApp(QObject):
                 f"Ready! Hold {hotkey_asr} to dictate, press {hotkey_tts} to read aloud.",
                 self.tray.icon(),
             )
+            # Show "Active" in capsule then auto-hide
+            self.capsule.show_ready()
             self.hotkey_manager.register_asr(hotkey_asr)
             self.hotkey_manager.register_tts(hotkey_tts)
 
