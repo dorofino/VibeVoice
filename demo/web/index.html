@@ -385,8 +385,8 @@
 <script>
 (() => {
   const SAMPLE_RATE = 24_000;
-  const BUFFER_SIZE = 2048;
-  const PREBUFFER_SEC = 0.1;
+  const BUFFER_SIZE = 4096;
+  const PREBUFFER_SEC = 2.0;
 
   let audioCtx = null;
   let scriptNode = null;
@@ -882,7 +882,7 @@
 
       if (socketClosed && buffer.length === 0 && chunk.every(sample => sample === 0)) {
         silentFrameCount += 1;
-        if (silentFrameCount >= 4) {
+        if (silentFrameCount >= 20) {
           stop();
         }
       } else {

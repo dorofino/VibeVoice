@@ -1,0 +1,53 @@
+import json
+from typing import Any
+
+from desktop.config import (
+    SETTINGS_FILE, DEFAULT_HOTKEY_ASR, DEFAULT_HOTKEY_TTS,
+    TTS_DEFAULT_VOICE, TTS_DEFAULT_CFG, TTS_DEFAULT_STEPS,
+    ASR_MODEL_SIZE,
+)
+
+DEFAULTS = {
+    "dark_mode": True,
+    "tts_voice": TTS_DEFAULT_VOICE,
+    "tts_cfg": TTS_DEFAULT_CFG,
+    "tts_steps": TTS_DEFAULT_STEPS,
+    "asr_model_size": ASR_MODEL_SIZE,
+    "asr_mode": "local",  # "local" or "cloud"
+    "hotkey_asr": DEFAULT_HOTKEY_ASR,
+    "hotkey_tts": DEFAULT_HOTKEY_TTS,
+    "enhanced_intent": True,
+    "ai_polish": True,
+    "api_key": "",
+}
+
+
+class Settings:
+    def __init__(self):
+        self._data: dict[str, Any] = dict(DEFAULTS)
+        self.load()
+
+    def load(self):
+        try:
+            if SETTINGS_FILE.exists():
+                with open(SETTINGS_FILE) as f:
+                    saved = json.load(f)
+                self._data.update(saved)
+        except Exception:
+            pass
+
+    def save(self):
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(self._data, f, indent=2)
+
+    def get(self, key: str) -> Any:
+        return self._data.get(key, DEFAULTS.get(key))
+
+    def set(self, key: str, value: Any):
+        self._data[key] = value
+        self.save()
+
+    @property
+    def all(self) -> dict[str, Any]:
+        return dict(self._data)
