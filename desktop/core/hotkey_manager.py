@@ -16,32 +16,48 @@ class HotkeyManager(QObject):
         self._registered: dict[str, list] = {}
         self._asr_hotkey: Optional[str] = None
         self._tts_hotkey: Optional[str] = None
+        self._asr_parts: list[str] = []
+        self._asr_combo_active = False
 
     def register_asr(self, hotkey: str):
         """Register push-to-talk hotkey (press to start, release to stop)."""
         self.unregister("asr")
         self._asr_hotkey = hotkey
+        self._asr_parts = [p.strip().lower() for p in hotkey.split("+") if p.strip()]
+        self._asr_combo_active = False
 
-        # Parse the hotkey parts for press/release detection
-        parts = hotkey.split("+")
-        trigger_key = parts[-1]  # Last key is the trigger
+        # Track full combo state on every keyboard event so release is reliable
+        # even when Win key events are inconsistent.
+        hook = keyboard.hook(self._on_asr_event, suppress=False)
+        self._registered["asr"] = [hook]
 
-        hooks = []
-        hooks.append(keyboard.on_press_key(trigger_key, self._on_asr_press, suppress=False))
-        hooks.append(keyboard.on_release_key(trigger_key, self._on_asr_release, suppress=False))
-        self._registered["asr"] = hooks
+    def _part_pressed(self, part: str) -> bool:
+        aliases = {
+            "win": ["windows", "left windows", "right windows", "win"],
+            "ctrl": ["ctrl", "left ctrl", "right ctrl"],
+            "shift": ["shift", "left shift", "right shift"],
+            "alt": ["alt", "left alt", "right alt"],
+        }
+        keys = aliases.get(part, [part])
+        for key in keys:
+            try:
+                if keyboard.is_pressed(key):
+                    return True
+            except Exception:
+                continue
+        return False
 
-    def _on_asr_press(self, event):
-        if not self._asr_hotkey:
+    def _on_asr_event(self, event):
+        if not self._asr_parts:
             return
-        # Check if modifier keys are held
-        parts = self._asr_hotkey.split("+")
-        modifiers = parts[:-1]
-        if all(keyboard.is_pressed(mod) for mod in modifiers):
-            self.asr_pressed.emit()
 
-    def _on_asr_release(self, event):
-        self.asr_released.emit()
+        combo_pressed = all(self._part_pressed(part) for part in self._asr_parts)
+        if combo_pressed and not self._asr_combo_active:
+            self._asr_combo_active = True
+            self.asr_pressed.emit()
+        elif not combo_pressed and self._asr_combo_active:
+            self._asr_combo_active = False
+            self.asr_released.emit()
 
     def register_tts(self, hotkey: str):
         """Register TTS read-aloud hotkey."""
@@ -62,6 +78,8 @@ class HotkeyManager(QObject):
                 keyboard.unhook(hook)
             except (ValueError, KeyError):
                 pass
+        if name == "asr":
+            self._asr_combo_active = False
 
     def unregister_all(self):
         for name in list(self._registered.keys()):

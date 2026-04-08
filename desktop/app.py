@@ -63,6 +63,9 @@ class VoiceDesktopApp(QObject):
         self._tts_active = False
         self._models_ready = False
         self._recording_start_time = 0.0
+        self._asr_watchdog = QTimer(self)
+        self._asr_watchdog.setInterval(150)
+        self._asr_watchdog.timeout.connect(self._check_asr_watchdog)
 
         self._connect_signals()
 
@@ -126,6 +129,7 @@ class VoiceDesktopApp(QObject):
         self.tts_engine.error.connect(self._on_error)
         self.asr_engine.error.connect(self._on_error)
         self.text_processor.error.connect(self._on_error)
+        self.audio_player.playback_finished.connect(self._on_playback_finished)
 
         # Settings page
         self.settings_page.dark_mode_changed.connect(self._on_dark_mode_changed)
@@ -167,11 +171,17 @@ class VoiceDesktopApp(QObject):
         voices = self.tts_engine.list_voices()
         current_voice = self.settings.get("tts_voice")
         QTimer.singleShot(0, lambda: self.settings_page.set_voices(voices, current_voice))
+        # Register TTS hotkey immediately — don't wait for ASR
+        hotkey_tts = self.settings.get("hotkey_tts")
+        self.hotkey_manager.register_tts(hotkey_tts)
         self._check_all_ready()
 
     @pyqtSlot()
     def _on_asr_ready(self):
         self.tray.set_status("ASR ready")
+        # Register ASR hotkey immediately — don't wait for TTS
+        hotkey_asr = self.settings.get("hotkey_asr")
+        self.hotkey_manager.register_asr(hotkey_asr)
         self._check_all_ready()
 
     def _check_all_ready(self):
@@ -185,10 +195,7 @@ class VoiceDesktopApp(QObject):
                 f"Ready! Hold {hotkey_asr} to dictate, press {hotkey_tts} to read aloud.",
                 self.tray.icon(),
             )
-            # Show "Active" in capsule then auto-hide
             self.capsule.show_ready()
-            self.hotkey_manager.register_asr(hotkey_asr)
-            self.hotkey_manager.register_tts(hotkey_tts)
 
     @pyqtSlot(str)
     def _on_error(self, msg: str):
@@ -199,19 +206,21 @@ class VoiceDesktopApp(QObject):
 
     @pyqtSlot()
     def _on_asr_start(self):
-        if not self._models_ready or self._asr_active:
+        if not self.asr_engine.is_loaded or self._asr_active:
             return
         self._asr_active = True
         self._recording_start_time = time.time()
         self.tray.set_status("Recording...")
         self.capsule.show_recording()
         self.audio_recorder.start()
+        self._asr_watchdog.start()
 
     @pyqtSlot()
     def _on_asr_stop(self):
         if not self._asr_active:
             return
         self._asr_active = False
+        self._asr_watchdog.stop()
         duration = time.time() - self._recording_start_time
         self.tray.set_status("Transcribing...")
         self.capsule.show_transcribing()
@@ -225,6 +234,11 @@ class VoiceDesktopApp(QObject):
         threading.Thread(
             target=self._transcribe_and_insert, args=(audio, duration), daemon=True
         ).start()
+
+    @pyqtSlot()
+    def _check_asr_watchdog(self):
+        if self._asr_active and not self.audio_recorder.is_recording:
+            self._on_asr_stop()
 
     def _invoke_on_main(self, fn):
         """Safely invoke a function on the main thread."""
@@ -309,8 +323,14 @@ class VoiceDesktopApp(QObject):
     # --- TTS ---
 
     @pyqtSlot()
+    def _on_playback_finished(self):
+        self._tts_active = False
+        self.capsule.hide_capsule()
+        self.tray.set_status("Ready")
+
+    @pyqtSlot()
     def _on_tts_read(self):
-        if not self._models_ready:
+        if not self.tts_engine.is_loaded:
             return
 
         if self._tts_active:
@@ -321,17 +341,22 @@ class VoiceDesktopApp(QObject):
             self.tray.set_status("Ready")
             return
 
+        # Run grab_selection in a separate thread so the keyboard hook
+        # thread is free — calling keyboard.send() while a hotkey callback
+        # is still in progress causes a deadlock / crash.
+        threading.Thread(target=self._grab_and_speak, daemon=True).start()
+
+    def _grab_and_speak(self):
+        # Small delay lets the physical hotkey keys finish releasing
+        time.sleep(0.15)
         text = clipboard.grab_selection()
         if not text.strip():
             return
 
         self._tts_active = True
-        self.tray.set_status("Speaking...")
-        self.capsule.show_speaking()
-
-        threading.Thread(
-            target=self._speak_text, args=(text,), daemon=True
-        ).start()
+        self._invoke_on_main(lambda: self.tray.set_status("Speaking..."))
+        self._invoke_on_main(self.capsule.show_speaking)
+        self._speak_text(text)
 
     def _speak_text(self, text: str):
         try:
@@ -340,11 +365,10 @@ class VoiceDesktopApp(QObject):
             chunks = self.tts_engine.stream(text, voice_key=voice, inference_steps=steps)
             self.audio_player.play_stream(chunks)
         except Exception as e:
-            QTimer.singleShot(0, lambda: self._on_error(f"TTS failed: {e}"))
-        finally:
             self._tts_active = False
             QTimer.singleShot(0, self.capsule.hide_capsule)
             QTimer.singleShot(0, lambda: self.tray.set_status("Ready"))
+            QTimer.singleShot(0, lambda: self._on_error(f"TTS failed: {e}"))
 
     # --- UI Refresh ---
 

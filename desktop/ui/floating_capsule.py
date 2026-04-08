@@ -55,10 +55,16 @@ class BITMAPINFOHEADER(ctypes.Structure):
     ]
 
 
+LRESULT = ctypes.c_ssize_t  # 64-bit on x64
+WPARAM = ctypes.c_size_t
+LPARAM = ctypes.c_ssize_t
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_void_p, ctypes.c_uint, WPARAM, LPARAM)
+
+
 class WNDCLASSEXW(ctypes.Structure):
     _fields_ = [
         ("cbSize", ctypes.c_uint), ("style", ctypes.c_uint),
-        ("lpfnWndProc", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)),
+        ("lpfnWndProc", WNDPROC),
         ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
         ("hInstance", ctypes.c_void_p), ("hIcon", ctypes.c_void_p),
         ("hCursor", ctypes.c_void_p), ("hbrBackground", ctypes.c_void_p),
@@ -66,6 +72,8 @@ class WNDCLASSEXW(ctypes.Structure):
         ("hIconSm", ctypes.c_void_p),
     ]
 
+user32.DefWindowProcW.argtypes = [ctypes.c_void_p, ctypes.c_uint, WPARAM, LPARAM]
+user32.DefWindowProcW.restype = LRESULT
 
 _wndproc_ref = None  # prevent GC
 
@@ -98,7 +106,6 @@ class FloatingCapsule(QObject):
 
     def _create_window(self):
         global _wndproc_ref
-        WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)
         _wndproc_ref = WNDPROC(_default_wndproc)
 
         hInstance = kernel32.GetModuleHandleW(None)
