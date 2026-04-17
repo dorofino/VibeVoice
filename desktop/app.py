@@ -24,6 +24,7 @@ from desktop.storage.settings import Settings
 from desktop.storage.history_db import HistoryDB
 from desktop.storage.hotwords import Hotwords
 from desktop.core.text_processor import TextProcessor
+from desktop.core.tts_text_normalizer import normalize_for_tts
 
 RESOURCES = Path(__file__).parent / "resources"
 
@@ -100,6 +101,7 @@ class VoiceDesktopApp(QObject):
             dark_mode=self.settings.get("dark_mode"),
             asr_mode=self.settings.get("asr_mode"),
             steps=self.settings.get("tts_steps"),
+            cfg=self.settings.get("tts_cfg"),
             enhanced_intent=self.settings.get("enhanced_intent"),
             ai_polish=self.settings.get("ai_polish"),
             api_key=self.settings.get("api_key"),
@@ -139,6 +141,7 @@ class VoiceDesktopApp(QObject):
         self.settings_page.voice_changed.connect(self._on_voice_changed)
         self.settings_page.asr_mode_changed.connect(self._on_asr_mode_changed)
         self.settings_page.steps_changed.connect(self._on_steps_changed)
+        self.settings_page.cfg_changed.connect(self._on_cfg_changed)
 
         # Hotwords page
         self.hotwords_page.word_added.connect(self._on_hotword_added)
@@ -353,6 +356,10 @@ class VoiceDesktopApp(QObject):
         if not text.strip():
             return
 
+        text = normalize_for_tts(text)
+        if not text:
+            return
+
         self._tts_active = True
         self._invoke_on_main(lambda: self.tray.set_status("Speaking..."))
         self._invoke_on_main(self.capsule.show_speaking)
@@ -362,7 +369,10 @@ class VoiceDesktopApp(QObject):
         try:
             voice = self.settings.get("tts_voice")
             steps = self.settings.get("tts_steps")
-            chunks = self.tts_engine.stream(text, voice_key=voice, inference_steps=steps)
+            cfg = self.settings.get("tts_cfg")
+            chunks = self.tts_engine.stream(
+                text, voice_key=voice, cfg_scale=cfg, inference_steps=steps,
+            )
             self.audio_player.play_stream(chunks)
         except Exception as e:
             self._tts_active = False
@@ -408,6 +418,9 @@ class VoiceDesktopApp(QObject):
 
     def _on_steps_changed(self, steps: int):
         self.settings.set("tts_steps", steps)
+
+    def _on_cfg_changed(self, cfg: float):
+        self.settings.set("tts_cfg", cfg)
 
     def _on_hotword_added(self, word: str):
         self.hotwords.add(word)

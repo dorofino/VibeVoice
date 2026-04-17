@@ -42,6 +42,7 @@ class SettingsPage(QWidget):
     voice_changed = pyqtSignal(str)
     asr_mode_changed = pyqtSignal(str)
     steps_changed = pyqtSignal(int)
+    cfg_changed = pyqtSignal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -120,10 +121,10 @@ class SettingsPage(QWidget):
         steps_layout = QHBoxLayout(steps_widget)
         steps_layout.setContentsMargins(0, 0, 0, 0)
         self._steps_slider = QSlider(Qt.Orientation.Horizontal)
-        self._steps_slider.setRange(3, 15)
-        self._steps_slider.setValue(5)
+        self._steps_slider.setRange(3, 20)
+        self._steps_slider.setValue(10)
         self._steps_slider.setFixedWidth(160)
-        self._steps_label = QLabel("5")
+        self._steps_label = QLabel("10")
         self._steps_label.setObjectName("sliderValue")
         self._steps_slider.valueChanged.connect(self._on_steps_changed)
         steps_layout.addWidget(self._steps_slider)
@@ -132,11 +133,37 @@ class SettingsPage(QWidget):
         row4.add_control(steps_widget)
         layout.addWidget(row4)
 
+        # CFG scale (guidance strength)
+        cfg_widget = QWidget()
+        cfg_layout = QHBoxLayout(cfg_widget)
+        cfg_layout.setContentsMargins(0, 0, 0, 0)
+        self._cfg_slider = QSlider(Qt.Orientation.Horizontal)
+        # Slider is int; store as tenths (10 -> 1.0, 30 -> 3.0)
+        self._cfg_slider.setRange(10, 30)
+        self._cfg_slider.setValue(15)
+        self._cfg_slider.setFixedWidth(160)
+        self._cfg_label = QLabel("1.5")
+        self._cfg_label.setObjectName("sliderValue")
+        self._cfg_slider.valueChanged.connect(self._on_cfg_changed)
+        cfg_layout.addWidget(self._cfg_slider)
+        cfg_layout.addWidget(self._cfg_label)
+        row5 = SettingRow(
+            "Voice Guidance (CFG)",
+            "Higher values follow the voice prompt more closely; too high can sound robotic. Default 1.5.",
+        )
+        row5.add_control(cfg_widget)
+        layout.addWidget(row5)
+
         layout.addStretch()
 
     def _on_steps_changed(self, value: int):
         self._steps_label.setText(str(value))
         self.steps_changed.emit(value)
+
+    def _on_cfg_changed(self, value: int):
+        cfg = value / 10.0
+        self._cfg_label.setText(f"{cfg:.1f}")
+        self.cfg_changed.emit(cfg)
 
     def set_voices(self, voices: list[str], current: str):
         self._voice_combo.blockSignals(True)
@@ -147,6 +174,7 @@ class SettingsPage(QWidget):
         self._voice_combo.blockSignals(False)
 
     def set_values(self, dark_mode: bool, asr_mode: str, steps: int,
+                   cfg: float = 1.5,
                    enhanced_intent: bool = True, ai_polish: bool = True,
                    api_key: str = ""):
         self._dark_toggle.setChecked(dark_mode)
@@ -161,3 +189,8 @@ class SettingsPage(QWidget):
         self._steps_slider.setValue(steps)
         self._steps_label.setText(str(steps))
         self._steps_slider.blockSignals(False)
+        self._cfg_slider.blockSignals(True)
+        cfg_int = max(10, min(30, round(cfg * 10)))
+        self._cfg_slider.setValue(cfg_int)
+        self._cfg_label.setText(f"{cfg_int / 10.0:.1f}")
+        self._cfg_slider.blockSignals(False)
