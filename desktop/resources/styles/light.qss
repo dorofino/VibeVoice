@@ -179,6 +179,12 @@ QPushButton#removeButton:hover {
     color: #ff4444;
 }
 
+QScrollArea#settingsScroll,
+QScrollArea#settingsScroll > QWidget > QWidget {
+    background: transparent;
+    border: none;
+}
+
 QFrame#settingRow {
     background-color: #ffffff;
     border: 1px solid #e2e5f0;

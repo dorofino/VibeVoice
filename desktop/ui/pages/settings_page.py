@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QComboBox, QFrame, QSlider, QLineEdit,
+    QComboBox, QFrame, QSlider, QLineEdit, QScrollArea, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -13,10 +13,14 @@ class SettingRow(QFrame):
     def __init__(self, title: str, description: str, parent=None):
         super().__init__(parent)
         self.setObjectName("settingRow")
+        self.setMinimumHeight(72)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(20, 14, 20, 14)
+        self._layout.setSpacing(16)
 
         text_col = QVBoxLayout()
+        text_col.setSpacing(2)
         title_label = QLabel(title)
         title_label.setObjectName("settingTitle")
         text_col.addWidget(title_label)
@@ -46,14 +50,32 @@ class SettingsPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(12)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
+        # Fixed title above the scroll area
+        title_bar = QWidget()
+        title_layout = QVBoxLayout(title_bar)
+        title_layout.setContentsMargins(32, 28, 32, 8)
         title = QLabel("Settings")
         title.setObjectName("pageTitle")
-        layout.addWidget(title)
-        layout.addSpacing(8)
+        title_layout.addWidget(title)
+        outer.addWidget(title_bar)
+
+        # Scroll area wraps the rows so the page stays usable at any height
+        scroll = QScrollArea()
+        scroll.setObjectName("settingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(scroll, stretch=1)
+
+        content = QWidget()
+        scroll.setWidget(content)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(32, 8, 32, 28)
+        layout.setSpacing(12)
 
         # Dark Mode
         self._dark_toggle = ToggleSwitch()
