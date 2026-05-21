@@ -1,7 +1,10 @@
+import time
 from typing import Callable, Optional
 
 import keyboard
 from PyQt6.QtCore import QObject, pyqtSignal
+
+TTS_DEBOUNCE_SEC = 1.0
 
 
 class HotkeyManager(QObject):
@@ -18,6 +21,7 @@ class HotkeyManager(QObject):
         self._tts_hotkey: Optional[str] = None
         self._asr_parts: list[str] = []
         self._asr_combo_active = False
+        self._tts_last_trigger = 0.0
 
     def register_asr(self, hotkey: str):
         """Register push-to-talk hotkey (press to start, release to stop)."""
@@ -68,6 +72,10 @@ class HotkeyManager(QObject):
         self._registered["tts"] = [hook]
 
     def _on_tts(self):
+        now = time.monotonic()
+        if now - self._tts_last_trigger < TTS_DEBOUNCE_SEC:
+            return
+        self._tts_last_trigger = now
         self.tts_triggered.emit()
 
     def unregister(self, name: str):

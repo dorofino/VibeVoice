@@ -7,6 +7,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from desktop.ui.pages._toggle_switch import ToggleSwitch
 
 
+GROK_VOICES = ["eve", "ara", "rex", "sal", "leo"]
+
+
 class SettingRow(QFrame):
     """A single settings row with label, description, and control."""
 
@@ -43,13 +46,20 @@ class SettingsPage(QWidget):
     enhanced_intent_changed = pyqtSignal(bool)
     ai_polish_changed = pyqtSignal(bool)
     api_key_changed = pyqtSignal(str)
-    voice_changed = pyqtSignal(str)
-    asr_mode_changed = pyqtSignal(str)
+    grok_api_key_changed = pyqtSignal(str)
+    engine_changed = pyqtSignal(str)      # "local" or "grok"
+    voice_changed = pyqtSignal(str)       # local voice name
+    grok_voice_changed = pyqtSignal(str)  # grok voice name
+    asr_mode_changed = pyqtSignal(str)    # "local" or "cloud" (within local engine)
     steps_changed = pyqtSignal(int)
     cfg_changed = pyqtSignal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._local_voices: list[str] = []
+        self._local_voice = ""
+        self._grok_voice = "eve"
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -80,9 +90,9 @@ class SettingsPage(QWidget):
         # Dark Mode
         self._dark_toggle = ToggleSwitch()
         self._dark_toggle.toggled_signal.connect(self.dark_mode_changed.emit)
-        row1 = SettingRow("Dark Mode", "Switch to a darker color scheme.")
-        row1.add_control(self._dark_toggle)
-        layout.addWidget(row1)
+        row_dark = SettingRow("Dark Mode", "Switch to a darker color scheme.")
+        row_dark.add_control(self._dark_toggle)
+        layout.addWidget(row_dark)
 
         # Anthropic API Key
         self._api_key_input = QLineEdit()
@@ -120,25 +130,57 @@ class SettingsPage(QWidget):
         row_polish.add_control(self._polish_toggle)
         layout.addWidget(row_polish)
 
-        # Voice selection
+        # --- Speech Engine section ---
+
+        self._engine_combo = QComboBox()
+        self._engine_combo.setObjectName("settingCombo")
+        self._engine_combo.addItems(["Local (VibeVoice)", "Grok Voice"])
+        self._engine_combo.currentIndexChanged.connect(self._on_engine_toggled)
+        row_engine = SettingRow(
+            "Speech Engine",
+            "Switch between local VibeVoice models and Grok Voice API for both ASR and TTS.",
+        )
+        row_engine.add_control(self._engine_combo)
+        layout.addWidget(row_engine)
+
+        # Grok API Key (only visible when engine = grok)
+        self._grok_key_input = QLineEdit()
+        self._grok_key_input.setObjectName("apiKeyInput")
+        self._grok_key_input.setPlaceholderText("xai-...")
+        self._grok_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._grok_key_input.setMinimumWidth(240)
+        self._grok_key_input.editingFinished.connect(
+            lambda: self.grok_api_key_changed.emit(self._grok_key_input.text().strip())
+        )
+        self._row_grok_key = SettingRow(
+            "Grok API Key",
+            "xAI API key. Get one at console.x.ai.",
+        )
+        self._row_grok_key.add_control(self._grok_key_input)
+        layout.addWidget(self._row_grok_key)
+
+        # Voice selection (shared row — contents swap based on engine)
         self._voice_combo = QComboBox()
         self._voice_combo.setObjectName("settingCombo")
         self._voice_combo.setMinimumWidth(200)
-        self._voice_combo.currentTextChanged.connect(self.voice_changed.emit)
-        row2 = SettingRow("TTS Voice", "Select the voice for text-to-speech.")
-        row2.add_control(self._voice_combo)
-        layout.addWidget(row2)
+        self._voice_combo.currentTextChanged.connect(self._on_voice_picked)
+        self._row_voice = SettingRow("Voice", "Select the voice for text-to-speech.")
+        self._row_voice.add_control(self._voice_combo)
+        layout.addWidget(self._row_voice)
 
-        # ASR mode
+        # ASR source (only visible when engine = local)
         self._asr_combo = QComboBox()
         self._asr_combo.setObjectName("settingCombo")
         self._asr_combo.addItems(["local", "cloud"])
         self._asr_combo.currentTextChanged.connect(self.asr_mode_changed.emit)
-        row3 = SettingRow("ASR Mode", "Local (faster-whisper) or cloud (Vibing API) for speech recognition.")
-        row3.add_control(self._asr_combo)
-        layout.addWidget(row3)
+        self._row_asr = SettingRow(
+            "ASR Source",
+            "Local (faster-whisper) or cloud (Vibing API) for speech recognition.",
+        )
+        self._row_asr.add_control(self._asr_combo)
+        layout.addWidget(self._row_asr)
 
-        # Inference steps
+        # Inference steps (local only)
         steps_widget = QWidget()
         steps_layout = QHBoxLayout(steps_widget)
         steps_layout.setContentsMargins(0, 0, 0, 0)
@@ -151,16 +193,15 @@ class SettingsPage(QWidget):
         self._steps_slider.valueChanged.connect(self._on_steps_changed)
         steps_layout.addWidget(self._steps_slider)
         steps_layout.addWidget(self._steps_label)
-        row4 = SettingRow("Inference Steps", "Higher = better quality but slower TTS generation.")
-        row4.add_control(steps_widget)
-        layout.addWidget(row4)
+        self._row_steps = SettingRow("Inference Steps", "Higher = better quality but slower TTS generation.")
+        self._row_steps.add_control(steps_widget)
+        layout.addWidget(self._row_steps)
 
-        # CFG scale (guidance strength)
+        # CFG scale (local only)
         cfg_widget = QWidget()
         cfg_layout = QHBoxLayout(cfg_widget)
         cfg_layout.setContentsMargins(0, 0, 0, 0)
         self._cfg_slider = QSlider(Qt.Orientation.Horizontal)
-        # Slider is int; store as tenths (10 -> 1.0, 30 -> 3.0)
         self._cfg_slider.setRange(10, 30)
         self._cfg_slider.setValue(15)
         self._cfg_slider.setFixedWidth(160)
@@ -169,14 +210,55 @@ class SettingsPage(QWidget):
         self._cfg_slider.valueChanged.connect(self._on_cfg_changed)
         cfg_layout.addWidget(self._cfg_slider)
         cfg_layout.addWidget(self._cfg_label)
-        row5 = SettingRow(
+        self._row_cfg = SettingRow(
             "Voice Guidance (CFG)",
             "Higher values follow the voice prompt more closely; too high can sound robotic. Default 1.5.",
         )
-        row5.add_control(cfg_widget)
-        layout.addWidget(row5)
+        self._row_cfg.add_control(cfg_widget)
+        layout.addWidget(self._row_cfg)
 
         layout.addStretch()
+
+    # --- Engine toggle logic ---
+
+    def _engine_key(self) -> str:
+        return "grok" if self._engine_combo.currentIndex() == 1 else "local"
+
+    def _on_engine_toggled(self, _index: int):
+        engine = self._engine_key()
+        is_grok = engine == "grok"
+
+        # Show/hide context-dependent rows
+        self._row_grok_key.setVisible(is_grok)
+        self._row_asr.setVisible(not is_grok)
+        self._row_steps.setVisible(not is_grok)
+        self._row_cfg.setVisible(not is_grok)
+
+        # Swap voice list
+        self._voice_combo.blockSignals(True)
+        self._voice_combo.clear()
+        if is_grok:
+            self._voice_combo.addItems(GROK_VOICES)
+            if self._grok_voice in GROK_VOICES:
+                self._voice_combo.setCurrentText(self._grok_voice)
+        else:
+            if self._local_voices:
+                self._voice_combo.addItems(self._local_voices)
+                if self._local_voice in self._local_voices:
+                    self._voice_combo.setCurrentText(self._local_voice)
+        self._voice_combo.blockSignals(False)
+
+        self.engine_changed.emit(engine)
+
+    def _on_voice_picked(self, voice: str):
+        if not voice:
+            return
+        if self._engine_key() == "grok":
+            self._grok_voice = voice
+            self.grok_voice_changed.emit(voice)
+        else:
+            self._local_voice = voice
+            self.voice_changed.emit(voice)
 
     def _on_steps_changed(self, value: int):
         self._steps_label.setText(str(value))
@@ -187,23 +269,57 @@ class SettingsPage(QWidget):
         self._cfg_label.setText(f"{cfg:.1f}")
         self.cfg_changed.emit(cfg)
 
+    # --- Public API ---
+
     def set_voices(self, voices: list[str], current: str):
-        self._voice_combo.blockSignals(True)
-        self._voice_combo.clear()
-        self._voice_combo.addItems(voices)
-        if current in voices:
-            self._voice_combo.setCurrentText(current)
-        self._voice_combo.blockSignals(False)
+        self._local_voices = voices
+        self._local_voice = current
+        if self._engine_key() == "local":
+            self._voice_combo.blockSignals(True)
+            self._voice_combo.clear()
+            self._voice_combo.addItems(voices)
+            if current in voices:
+                self._voice_combo.setCurrentText(current)
+            self._voice_combo.blockSignals(False)
 
     def set_values(self, dark_mode: bool, asr_mode: str, steps: int,
                    cfg: float = 1.5,
                    enhanced_intent: bool = True, ai_polish: bool = True,
-                   api_key: str = ""):
+                   api_key: str = "", grok_api_key: str = "",
+                   engine: str = "local", grok_voice: str = "eve"):
         self._dark_toggle.setChecked(dark_mode)
         self._intent_toggle.setChecked(enhanced_intent)
         self._polish_toggle.setChecked(ai_polish)
         if api_key:
             self._api_key_input.setText(api_key)
+        if grok_api_key:
+            self._grok_key_input.setText(grok_api_key)
+
+        # Store voice state before triggering engine toggle
+        self._grok_voice = grok_voice
+
+        # Engine combo (triggers _on_engine_toggled which sets row visibility)
+        self._engine_combo.blockSignals(True)
+        self._engine_combo.setCurrentIndex(1 if engine == "grok" else 0)
+        self._engine_combo.blockSignals(False)
+
+        # Apply visibility manually since we blocked the signal
+        is_grok = engine == "grok"
+        self._row_grok_key.setVisible(is_grok)
+        self._row_asr.setVisible(not is_grok)
+        self._row_steps.setVisible(not is_grok)
+        self._row_cfg.setVisible(not is_grok)
+
+        # Populate voice combo for current engine
+        self._voice_combo.blockSignals(True)
+        self._voice_combo.clear()
+        if is_grok:
+            self._voice_combo.addItems(GROK_VOICES)
+            if grok_voice in GROK_VOICES:
+                self._voice_combo.setCurrentText(grok_voice)
+        # Local voices populated later via set_voices() once model loads
+        self._voice_combo.blockSignals(False)
+
         self._asr_combo.blockSignals(True)
         self._asr_combo.setCurrentText(asr_mode)
         self._asr_combo.blockSignals(False)

@@ -14,7 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 
 
 class TTSEngine(QObject):
-    """Wraps StreamingTTSService for desktop use."""
+    """Wraps StreamingTTSService (local) or Grok Voice API for desktop TTS."""
 
     model_loaded = pyqtSignal()
     error = pyqtSignal(str)
@@ -26,7 +26,7 @@ class TTSEngine(QObject):
         self._stop_event = threading.Event()
 
     def load(self):
-        """Load TTS model. Call from a background thread."""
+        """Load local TTS model. Call from a background thread."""
         try:
             from demo.web.app import StreamingTTSService
             self._service = StreamingTTSService(
@@ -54,19 +54,55 @@ class TTSEngine(QObject):
         voice_key: Optional[str] = None,
         cfg_scale: float = TTS_DEFAULT_CFG,
         inference_steps: int = TTS_DEFAULT_STEPS,
+        mode: str = "local",
+        grok_api_key: str = "",
+        grok_voice: str = "eve",
     ) -> Iterator[np.ndarray]:
-        """Yield audio chunks (float32 numpy arrays at 24kHz)."""
-        if not self.is_loaded:
-            return
+        """Yield audio chunks (float32 numpy arrays at 24kHz).
 
+        Args:
+            mode: "local" for VibeVoice model, "grok" for Grok Voice API
+            grok_api_key: xAI API key (required when mode="grok")
+            grok_voice: Grok voice name (eve, ara, rex, sal, leo)
+        """
         self._stop_event.clear()
-        yield from self._service.stream(
-            text=text,
-            cfg_scale=cfg_scale,
-            inference_steps=inference_steps,
-            voice_key=voice_key or TTS_DEFAULT_VOICE,
-            stop_event=self._stop_event,
-        )
+
+        if mode == "grok":
+            if not grok_api_key:
+                self.error.emit("Grok API key not set.")
+                return
+            yield from self._stream_grok(text, grok_api_key, grok_voice)
+        else:
+            if not self.is_loaded:
+                return
+            yield from self._service.stream(
+                text=text,
+                cfg_scale=cfg_scale,
+                inference_steps=inference_steps,
+                voice_key=voice_key or TTS_DEFAULT_VOICE,
+                stop_event=self._stop_event,
+            )
+
+    def _stream_grok(self, text: str, api_key: str, voice: str) -> Iterator[np.ndarray]:
+        """Stream TTS via Grok Voice Realtime API.
+
+        Yields chunks directly from the Grok WebSocket. Exceptions are
+        emitted on the error signal *and* re-raised so the audio player
+        knows the stream failed (instead of seeing an empty generator).
+        """
+        try:
+            from desktop.core.grok_voice import stream_tts
+            yield from stream_tts(
+                text=text,
+                api_key=api_key,
+                voice=voice,
+                stop_event=self._stop_event,
+            )
+        except GeneratorExit:
+            pass
+        except Exception as e:
+            self.error.emit(f"Grok TTS failed: {e}")
+            raise
 
     def stop(self):
         self._stop_event.set()

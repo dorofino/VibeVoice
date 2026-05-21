@@ -105,6 +105,9 @@ class VoiceDesktopApp(QObject):
             enhanced_intent=self.settings.get("enhanced_intent"),
             ai_polish=self.settings.get("ai_polish"),
             api_key=self.settings.get("api_key"),
+            grok_api_key=self.settings.get("grok_api_key"),
+            engine=self.settings.get("engine"),
+            grok_voice=self.settings.get("grok_voice"),
         )
         # Apply saved API key to text processor
         saved_key = self.settings.get("api_key")
@@ -138,7 +141,10 @@ class VoiceDesktopApp(QObject):
         self.settings_page.enhanced_intent_changed.connect(self._on_enhanced_intent_changed)
         self.settings_page.ai_polish_changed.connect(self._on_ai_polish_changed)
         self.settings_page.api_key_changed.connect(self._on_api_key_changed)
+        self.settings_page.grok_api_key_changed.connect(self._on_grok_api_key_changed)
+        self.settings_page.engine_changed.connect(self._on_engine_changed)
         self.settings_page.voice_changed.connect(self._on_voice_changed)
+        self.settings_page.grok_voice_changed.connect(self._on_grok_voice_changed)
         self.settings_page.asr_mode_changed.connect(self._on_asr_mode_changed)
         self.settings_page.steps_changed.connect(self._on_steps_changed)
         self.settings_page.cfg_changed.connect(self._on_cfg_changed)
@@ -154,8 +160,11 @@ class VoiceDesktopApp(QObject):
         self.tray.show()
         self.tray.set_status("Loading models...")
 
-        # Show loading capsule immediately
-        self.capsule.show_loading("Loading TTS model...")
+        engine = self.settings.get("engine")
+        if engine == "grok":
+            self.capsule.show_loading("Loading ASR model...")
+        else:
+            self.capsule.show_loading("Loading TTS model...")
 
         self._load_thread = threading.Thread(target=self._load_models, daemon=True)
         self._load_thread.start()
@@ -163,8 +172,10 @@ class VoiceDesktopApp(QObject):
         return self.qt_app.exec()
 
     def _load_models(self):
-        self.tts_engine.load()
-        self._invoke_on_main(lambda: self.capsule.update_loading("Loading ASR model..."))
+        engine = self.settings.get("engine")
+        if engine != "grok":
+            self.tts_engine.load()
+            self._invoke_on_main(lambda: self.capsule.update_loading("Loading ASR model..."))
         self.asr_engine.load()
 
     @pyqtSlot()
@@ -182,13 +193,19 @@ class VoiceDesktopApp(QObject):
     @pyqtSlot()
     def _on_asr_ready(self):
         self.tray.set_status("ASR ready")
-        # Register ASR hotkey immediately — don't wait for TTS
         hotkey_asr = self.settings.get("hotkey_asr")
         self.hotkey_manager.register_asr(hotkey_asr)
+        # When engine is grok, TTS model wasn't loaded so _on_tts_ready
+        # never fires — register the TTS hotkey here instead.
+        if self.settings.get("engine") == "grok":
+            hotkey_tts = self.settings.get("hotkey_tts")
+            self.hotkey_manager.register_tts(hotkey_tts)
         self._check_all_ready()
 
     def _check_all_ready(self):
-        if self.tts_engine.is_loaded and self.asr_engine.is_loaded:
+        engine = self.settings.get("engine")
+        tts_ok = self.tts_engine.is_loaded or engine == "grok"
+        if tts_ok and self.asr_engine.is_loaded:
             self._models_ready = True
             hotkey_asr = self.settings.get("hotkey_asr")
             hotkey_tts = self.settings.get("hotkey_tts")
@@ -209,7 +226,10 @@ class VoiceDesktopApp(QObject):
 
     @pyqtSlot()
     def _on_asr_start(self):
-        if not self.asr_engine.is_loaded or self._asr_active:
+        engine = self.settings.get("engine")
+        if engine != "grok" and not self.asr_engine.is_loaded:
+            return
+        if self._asr_active:
             return
         self._asr_active = True
         self._recording_start_time = time.time()
@@ -260,9 +280,16 @@ class VoiceDesktopApp(QObject):
             # Stage 1: Transcribe
             print("[pipeline] Transcribing...")
             self._invoke_on_main(self.capsule.show_transcribing)
-            asr_mode = self.settings.get("asr_mode")
+            engine = self.settings.get("engine")
+            if engine == "grok":
+                asr_mode = "grok"
+            else:
+                asr_mode = self.settings.get("asr_mode")
             hotword_list = self.hotwords.words
-            raw_text = self.asr_engine.transcribe(audio, hotwords=hotword_list, mode=asr_mode)
+            grok_key = self.settings.get("grok_api_key") if asr_mode == "grok" else ""
+            raw_text = self.asr_engine.transcribe(
+                audio, hotwords=hotword_list, mode=asr_mode, grok_api_key=grok_key,
+            )
             print(f"[pipeline] Result: {raw_text[:80]!r}")
 
             if not raw_text.strip():
@@ -333,16 +360,16 @@ class VoiceDesktopApp(QObject):
 
     @pyqtSlot()
     def _on_tts_read(self):
-        if not self.tts_engine.is_loaded:
+        engine = self.settings.get("engine")
+        if engine != "grok" and not self.tts_engine.is_loaded:
             return
 
         if self._tts_active:
             self.audio_player.stop()
             self.tts_engine.stop()
-            self._tts_active = False
-            self.capsule.hide_capsule()
-            self.tray.set_status("Ready")
-            return
+
+        # Set active immediately to prevent double-trigger from rapid hotkey presses
+        self._tts_active = True
 
         # Run grab_selection in a separate thread so the keyboard hook
         # thread is free — calling keyboard.send() while a hotkey callback
@@ -354,26 +381,43 @@ class VoiceDesktopApp(QObject):
         time.sleep(0.15)
         text = clipboard.grab_selection()
         if not text.strip():
+            self._tts_active = False
             return
 
         text = normalize_for_tts(text)
         if not text:
+            self._tts_active = False
             return
 
-        self._tts_active = True
         self._invoke_on_main(lambda: self.tray.set_status("Speaking..."))
         self._invoke_on_main(self.capsule.show_speaking)
         self._speak_text(text)
 
     def _speak_text(self, text: str):
         try:
+            engine = self.settings.get("engine")
             voice = self.settings.get("tts_voice")
             steps = self.settings.get("tts_steps")
             cfg = self.settings.get("tts_cfg")
+            grok_voice = self.settings.get("grok_voice")
+            grok_key = ""
+            if engine == "grok":
+                grok_key = self.settings.get("grok_api_key")
+                if not grok_key:
+                    self._invoke_on_main(
+                        lambda: self._on_error("Grok API key not set. Add it in Settings.")
+                    )
+                    self._tts_active = False
+                    self._invoke_on_main(self.capsule.hide_capsule)
+                    return
+            print(f"[tts] engine={engine} grok_voice={grok_voice}")
             chunks = self.tts_engine.stream(
                 text, voice_key=voice, cfg_scale=cfg, inference_steps=steps,
+                mode=engine, grok_api_key=grok_key, grok_voice=grok_voice,
             )
-            self.audio_player.play_stream(chunks)
+            # Grok REST API has its own latency — use shorter prebuffer
+            prebuf = 0.3 if engine == "grok" else None
+            self.audio_player.play_stream(chunks, **({"prebuffer_sec": prebuf} if prebuf else {}))
         except Exception as e:
             self._tts_active = False
             QTimer.singleShot(0, self.capsule.hide_capsule)
@@ -410,8 +454,21 @@ class VoiceDesktopApp(QObject):
         self.settings.set("api_key", key)
         self.text_processor.set_api_key(key)
 
+    def _on_grok_api_key_changed(self, key: str):
+        self.settings.set("grok_api_key", key)
+
+    def _on_engine_changed(self, engine: str):
+        self.settings.set("engine", engine)
+        # Load local TTS model on demand when switching back to local
+        if engine == "local" and not self.tts_engine.is_loaded:
+            self.capsule.show_loading("Loading TTS model...")
+            threading.Thread(target=self.tts_engine.load, daemon=True).start()
+
     def _on_voice_changed(self, voice: str):
         self.settings.set("tts_voice", voice)
+
+    def _on_grok_voice_changed(self, voice: str):
+        self.settings.set("grok_voice", voice)
 
     def _on_asr_mode_changed(self, mode: str):
         self.settings.set("asr_mode", mode)

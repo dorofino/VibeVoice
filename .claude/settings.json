@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(powershell -NoProfile -Command \"Get-ItemProperty -Path 'HKCU:\\\\\\\\Software\\\\\\\\Microsoft\\\\\\\\Windows\\\\\\\\CurrentVersion\\\\\\\\Run' | Select-Object 'VibeVoice Desktop'\")"
+      "Bash(powershell -NoProfile -Command \"Get-ItemProperty -Path 'HKCU:\\\\\\\\Software\\\\\\\\Microsoft\\\\\\\\Windows\\\\\\\\CurrentVersion\\\\\\\\Run' | Select-Object 'VibeVoice Desktop'\")",
+      "WebFetch(domain:docs.x.ai)",
+      "WebSearch",
+      "WebFetch(domain:x.ai)",
+      "WebFetch(domain:www.adwaitx.com)",
+      "WebFetch(domain:www.marktechpost.com)",
+      "WebFetch(domain:www.eachlabs.ai)",
+      "WebFetch(domain:getstream.io)",
+      "WebFetch(domain:blog.laozhang.ai)"
     ]
   }
 }

@@ -27,17 +27,17 @@ class AudioPlayer(QObject):
     def is_playing(self) -> bool:
         return self._playing
 
-    def play_stream(self, chunk_iterator: Iterator[np.ndarray]):
+    def play_stream(self, chunk_iterator: Iterator[np.ndarray], prebuffer_sec: float = TTS_PREBUFFER_SEC):
         """Play audio from a chunk iterator in a background thread."""
         self.stop()
         self._stop_event.clear()
         self._thread = threading.Thread(
-            target=self._play_worker, args=(chunk_iterator,), daemon=True
+            target=self._play_worker, args=(chunk_iterator, prebuffer_sec), daemon=True
         )
         self._thread.start()
 
-    def _play_worker(self, chunk_iterator: Iterator[np.ndarray]):
-        prebuffer_samples = int(TTS_SAMPLE_RATE * TTS_PREBUFFER_SEC)
+    def _play_worker(self, chunk_iterator: Iterator[np.ndarray], prebuffer_sec: float = TTS_PREBUFFER_SEC):
+        prebuffer_samples = int(TTS_SAMPLE_RATE * prebuffer_sec)
         prebuffer = []
         prebuffer_len = 0
 
@@ -51,7 +51,8 @@ class AudioPlayer(QObject):
                 prebuffer_len += len(chunk)
                 if prebuffer_len >= prebuffer_samples:
                     break
-        except Exception:
+        except Exception as e:
+            print(f"[audio_player] Prebuffer error: {e}")
             return
 
         if not prebuffer or self._stop_event.is_set():
@@ -90,8 +91,8 @@ class AudioPlayer(QObject):
                         break
                 sd.sleep(50)
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[audio_player] Playback error: {e}")
         finally:
             self._cleanup()
 
@@ -118,6 +119,7 @@ class AudioPlayer(QObject):
         return chunk
 
     def _cleanup(self):
+        was_playing = self._playing
         if self._stream:
             try:
                 self._stream.stop()
@@ -126,7 +128,10 @@ class AudioPlayer(QObject):
                 pass
             self._stream = None
         self._playing = False
-        self.playback_finished.emit()
+        # Only emit if we were actually playing — avoid spurious signals
+        # from stop() calls that happen before playback starts.
+        if was_playing:
+            self.playback_finished.emit()
 
     def stop(self):
         self._stop_event.set()

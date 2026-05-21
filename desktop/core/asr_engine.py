@@ -68,14 +68,18 @@ class ASREngine(QObject):
         audio: np.ndarray,
         hotwords: Optional[list[str]] = None,
         mode: str = "local",
+        grok_api_key: str = "",
     ) -> str:
         """Transcribe audio to text.
 
         Args:
             audio: float32 numpy array at 16kHz
             hotwords: list of custom words to bias recognition
-            mode: "local" for faster-whisper, "cloud" for Vibing API
+            mode: "local" for faster-whisper, "cloud" for Vibing API, "grok" for Grok Voice
+            grok_api_key: xAI API key (required when mode="grok")
         """
+        if mode == "grok" and grok_api_key:
+            return self._transcribe_grok(audio, grok_api_key)
         if mode == "cloud" and self._cloud_url:
             return self._transcribe_cloud(audio, hotwords)
         return self._transcribe_local(audio, hotwords)
@@ -121,3 +125,12 @@ class ASREngine(QObject):
             # Fall back to local on cloud failure
             self.error.emit(f"Cloud ASR failed, falling back to local: {e}")
             return self._transcribe_local(audio, hotwords)
+
+    def _transcribe_grok(self, audio: np.ndarray, api_key: str) -> str:
+        """Send audio to Grok Voice Realtime API for transcription."""
+        try:
+            from desktop.core.grok_voice import transcribe
+            return transcribe(audio=audio, api_key=api_key, sample_rate=ASR_SAMPLE_RATE)
+        except Exception as e:
+            self.error.emit(f"Grok ASR failed, falling back to local: {e}")
+            return self._transcribe_local(audio, None)

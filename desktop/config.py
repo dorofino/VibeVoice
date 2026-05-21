@@ -27,6 +27,9 @@ ASR_COMPUTE_TYPE = "float16"
 # Cloud ASR fallback
 VIBING_CONFIG_PATH = Path(os.environ.get("LOCALAPPDATA", "")) / "Vibing" / "config.yaml"
 
+# Grok Voice
+GROK_DEFAULT_VOICE = "eve"
+
 # Hotkeys
 DEFAULT_HOTKEY_ASR = "ctrl+shift+win"
 DEFAULT_HOTKEY_TTS = "ctrl+shift+alt"
