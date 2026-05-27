@@ -226,8 +226,7 @@ class VoiceDesktopApp(QObject):
 
     @pyqtSlot()
     def _on_asr_start(self):
-        engine = self.settings.get("engine")
-        if engine != "grok" and not self.asr_engine.is_loaded:
+        if not self.asr_engine.is_loaded:
             return
         if self._asr_active:
             return
@@ -277,14 +276,10 @@ class VoiceDesktopApp(QObject):
 
     def _transcribe_and_insert(self, audio, duration: float):
         try:
-            # Stage 1: Transcribe
+            # Stage 1: Transcribe (always use local faster-whisper for ASR)
             print("[pipeline] Transcribing...")
             self._invoke_on_main(self.capsule.show_transcribing)
-            engine = self.settings.get("engine")
-            if engine == "grok":
-                asr_mode = "grok"
-            else:
-                asr_mode = self.settings.get("asr_mode")
+            asr_mode = self.settings.get("asr_mode")
             hotword_list = self.hotwords.words
             grok_key = self.settings.get("grok_api_key") if asr_mode == "grok" else ""
             raw_text = self.asr_engine.transcribe(

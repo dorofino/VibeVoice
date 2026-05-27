@@ -14,7 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 
 
 class TTSEngine(QObject):
-    """Wraps StreamingTTSService (local) or Grok Voice API for desktop TTS."""
+    """Wraps StreamingTTSService (local), Grok Voice, or Microsoft Foundry (Azure Speech) TTS."""
 
     model_loaded = pyqtSignal()
     error = pyqtSignal(str)
@@ -57,13 +57,20 @@ class TTSEngine(QObject):
         mode: str = "local",
         grok_api_key: str = "",
         grok_voice: str = "eve",
+        foundry_endpoint: str = "",
+        foundry_api_key: str = "",
+        foundry_voice: str = "en-US-AvaNeural",
     ) -> Iterator[np.ndarray]:
         """Yield audio chunks (float32 numpy arrays at 24kHz).
 
         Args:
-            mode: "local" for VibeVoice model, "grok" for Grok Voice API
+            mode: "local" for VibeVoice model, "grok" for Grok Voice API,
+                "foundry" for Microsoft Foundry / Azure Speech REST TTS
             grok_api_key: xAI API key (required when mode="grok")
             grok_voice: Grok voice name (eve, ara, rex, sal, leo)
+            foundry_endpoint: Azure Speech endpoint URL (required when mode="foundry")
+            foundry_api_key: Azure Speech subscription key (required when mode="foundry")
+            foundry_voice: Azure Speech neural voice name
         """
         self._stop_event.clear()
 
@@ -72,6 +79,11 @@ class TTSEngine(QObject):
                 self.error.emit("Grok API key not set.")
                 return
             yield from self._stream_grok(text, grok_api_key, grok_voice)
+        elif mode == "foundry":
+            if not foundry_endpoint or not foundry_api_key:
+                self.error.emit("Foundry endpoint and API key not set.")
+                return
+            yield from self._stream_foundry(text, foundry_endpoint, foundry_api_key, foundry_voice)
         else:
             if not self.is_loaded:
                 return

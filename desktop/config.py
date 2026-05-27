@@ -30,6 +30,9 @@ VIBING_CONFIG_PATH = Path(os.environ.get("LOCALAPPDATA", "")) / "Vibing" / "conf
 # Grok Voice
 GROK_DEFAULT_VOICE = "eve"
 
+# Microsoft Foundry / Azure Speech
+FOUNDRY_DEFAULT_VOICE = "en-US-AvaNeural"
+
 # Hotkeys
 DEFAULT_HOTKEY_ASR = "ctrl+shift+win"
 DEFAULT_HOTKEY_TTS = "ctrl+shift+alt"

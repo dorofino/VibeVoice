@@ -4,7 +4,7 @@ from typing import Any
 from desktop.config import (
     SETTINGS_FILE, DEFAULT_HOTKEY_ASR, DEFAULT_HOTKEY_TTS,
     TTS_DEFAULT_VOICE, TTS_DEFAULT_CFG, TTS_DEFAULT_STEPS,
-    ASR_MODEL_SIZE, GROK_DEFAULT_VOICE,
+    ASR_MODEL_SIZE, GROK_DEFAULT_VOICE, FOUNDRY_DEFAULT_VOICE,
 )
 
 DEFAULTS = {
@@ -12,7 +12,7 @@ DEFAULTS = {
     "tts_voice": TTS_DEFAULT_VOICE,
     "tts_cfg": TTS_DEFAULT_CFG,
     "tts_steps": TTS_DEFAULT_STEPS,
-    "engine": "local",  # "local" or "grok" (controls both ASR and TTS)
+    "engine": "local",  # "local", "grok", or "foundry" (controls both ASR and TTS)
     "asr_model_size": ASR_MODEL_SIZE,
     "asr_mode": "local",  # "local" or "cloud" (only used when engine="local")
     "hotkey_asr": DEFAULT_HOTKEY_ASR,
@@ -22,6 +22,9 @@ DEFAULTS = {
     "api_key": "",
     "grok_api_key": "",
     "grok_voice": GROK_DEFAULT_VOICE,
+    "foundry_endpoint": "",
+    "foundry_api_key": "",
+    "foundry_voice": FOUNDRY_DEFAULT_VOICE,
 }
 
 
