@@ -116,5 +116,24 @@ class TTSEngine(QObject):
             self.error.emit(f"Grok TTS failed: {e}")
             raise
 
+    def _stream_foundry(
+        self, text: str, endpoint: str, api_key: str, voice: str
+    ) -> Iterator[np.ndarray]:
+        """Stream TTS via Microsoft Foundry / Azure Speech REST."""
+        try:
+            from desktop.core.foundry_voice import stream_tts
+            yield from stream_tts(
+                text=text,
+                endpoint=endpoint,
+                api_key=api_key,
+                voice=voice,
+                stop_event=self._stop_event,
+            )
+        except GeneratorExit:
+            pass
+        except Exception as e:
+            self.error.emit(f"Foundry TTS failed: {e}")
+            raise
+
     def stop(self):
         self._stop_event.set()

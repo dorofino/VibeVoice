@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
+from desktop.core.foundry_voice import FOUNDRY_VOICES
 from desktop.ui.pages._toggle_switch import ToggleSwitch
 
 
@@ -47,10 +48,13 @@ class SettingsPage(QWidget):
     ai_polish_changed = pyqtSignal(bool)
     api_key_changed = pyqtSignal(str)
     grok_api_key_changed = pyqtSignal(str)
-    engine_changed = pyqtSignal(str)      # "local" or "grok"
-    voice_changed = pyqtSignal(str)       # local voice name
-    grok_voice_changed = pyqtSignal(str)  # grok voice name
-    asr_mode_changed = pyqtSignal(str)    # "local" or "cloud" (within local engine)
+    engine_changed = pyqtSignal(str)         # "local", "grok", or "foundry"
+    voice_changed = pyqtSignal(str)          # local voice name
+    grok_voice_changed = pyqtSignal(str)     # grok voice name
+    foundry_voice_changed = pyqtSignal(str)  # foundry voice name
+    foundry_endpoint_changed = pyqtSignal(str)
+    foundry_api_key_changed = pyqtSignal(str)
+    asr_mode_changed = pyqtSignal(str)       # "local" or "cloud" (within local engine)
     steps_changed = pyqtSignal(int)
     cfg_changed = pyqtSignal(float)
 
@@ -59,6 +63,7 @@ class SettingsPage(QWidget):
         self._local_voices: list[str] = []
         self._local_voice = ""
         self._grok_voice = "eve"
+        self._foundry_voice = FOUNDRY_VOICES[0]
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -134,11 +139,11 @@ class SettingsPage(QWidget):
 
         self._engine_combo = QComboBox()
         self._engine_combo.setObjectName("settingCombo")
-        self._engine_combo.addItems(["Local (VibeVoice)", "Grok Voice"])
+        self._engine_combo.addItems(["Local (VibeVoice)", "Grok Voice", "Microsoft Foundry"])
         self._engine_combo.currentIndexChanged.connect(self._on_engine_toggled)
         row_engine = SettingRow(
             "Speech Engine",
-            "Switch between local VibeVoice models and Grok Voice API for both ASR and TTS.",
+            "Local VibeVoice, Grok Voice (ASR+TTS), or Microsoft Foundry (Azure Speech TTS only).",
         )
         row_engine.add_control(self._engine_combo)
         layout.addWidget(row_engine)
@@ -158,6 +163,37 @@ class SettingsPage(QWidget):
         )
         self._row_grok_key.add_control(self._grok_key_input)
         layout.addWidget(self._row_grok_key)
+
+        # Foundry endpoint (only visible when engine = foundry)
+        self._foundry_endpoint_input = QLineEdit()
+        self._foundry_endpoint_input.setObjectName("apiKeyInput")
+        self._foundry_endpoint_input.setPlaceholderText("https://<region>.tts.speech.microsoft.com")
+        self._foundry_endpoint_input.setMinimumWidth(240)
+        self._foundry_endpoint_input.editingFinished.connect(
+            lambda: self.foundry_endpoint_changed.emit(self._foundry_endpoint_input.text().strip())
+        )
+        self._row_foundry_endpoint = SettingRow(
+            "Foundry Endpoint",
+            "Azure Speech endpoint base URL (e.g., https://eastus.tts.speech.microsoft.com).",
+        )
+        self._row_foundry_endpoint.add_control(self._foundry_endpoint_input)
+        layout.addWidget(self._row_foundry_endpoint)
+
+        # Foundry API key (only visible when engine = foundry)
+        self._foundry_key_input = QLineEdit()
+        self._foundry_key_input.setObjectName("apiKeyInput")
+        self._foundry_key_input.setPlaceholderText("Azure Speech resource key")
+        self._foundry_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._foundry_key_input.setMinimumWidth(240)
+        self._foundry_key_input.editingFinished.connect(
+            lambda: self.foundry_api_key_changed.emit(self._foundry_key_input.text().strip())
+        )
+        self._row_foundry_key = SettingRow(
+            "Foundry API Key",
+            "Speech resource key from the Azure portal (Keys and Endpoint page).",
+        )
+        self._row_foundry_key.add_control(self._foundry_key_input)
+        layout.addWidget(self._row_foundry_key)
 
         # Voice selection (shared row — contents swap based on engine)
         self._voice_combo = QComboBox()
@@ -221,26 +257,35 @@ class SettingsPage(QWidget):
 
     # --- Engine toggle logic ---
 
+    _ENGINE_INDEX = {0: "local", 1: "grok", 2: "foundry"}
+    _ENGINE_TO_INDEX = {v: k for k, v in _ENGINE_INDEX.items()}
+
     def _engine_key(self) -> str:
-        return "grok" if self._engine_combo.currentIndex() == 1 else "local"
+        return self._ENGINE_INDEX.get(self._engine_combo.currentIndex(), "local")
 
-    def _on_engine_toggled(self, _index: int):
-        engine = self._engine_key()
+    def _apply_engine_visibility(self, engine: str):
+        is_local = engine == "local"
         is_grok = engine == "grok"
-
-        # Show/hide context-dependent rows
+        is_foundry = engine == "foundry"
         self._row_grok_key.setVisible(is_grok)
-        self._row_asr.setVisible(not is_grok)
-        self._row_steps.setVisible(not is_grok)
-        self._row_cfg.setVisible(not is_grok)
+        self._row_foundry_endpoint.setVisible(is_foundry)
+        self._row_foundry_key.setVisible(is_foundry)
+        # ASR source / TTS sliders only apply to the local engine
+        self._row_asr.setVisible(is_local)
+        self._row_steps.setVisible(is_local)
+        self._row_cfg.setVisible(is_local)
 
-        # Swap voice list
+    def _populate_voice_combo(self, engine: str):
         self._voice_combo.blockSignals(True)
         self._voice_combo.clear()
-        if is_grok:
+        if engine == "grok":
             self._voice_combo.addItems(GROK_VOICES)
             if self._grok_voice in GROK_VOICES:
                 self._voice_combo.setCurrentText(self._grok_voice)
+        elif engine == "foundry":
+            self._voice_combo.addItems(list(FOUNDRY_VOICES))
+            if self._foundry_voice in FOUNDRY_VOICES:
+                self._voice_combo.setCurrentText(self._foundry_voice)
         else:
             if self._local_voices:
                 self._voice_combo.addItems(self._local_voices)
@@ -248,14 +293,22 @@ class SettingsPage(QWidget):
                     self._voice_combo.setCurrentText(self._local_voice)
         self._voice_combo.blockSignals(False)
 
+    def _on_engine_toggled(self, _index: int):
+        engine = self._engine_key()
+        self._apply_engine_visibility(engine)
+        self._populate_voice_combo(engine)
         self.engine_changed.emit(engine)
 
     def _on_voice_picked(self, voice: str):
         if not voice:
             return
-        if self._engine_key() == "grok":
+        engine = self._engine_key()
+        if engine == "grok":
             self._grok_voice = voice
             self.grok_voice_changed.emit(voice)
+        elif engine == "foundry":
+            self._foundry_voice = voice
+            self.foundry_voice_changed.emit(voice)
         else:
             self._local_voice = voice
             self.voice_changed.emit(voice)
@@ -275,18 +328,15 @@ class SettingsPage(QWidget):
         self._local_voices = voices
         self._local_voice = current
         if self._engine_key() == "local":
-            self._voice_combo.blockSignals(True)
-            self._voice_combo.clear()
-            self._voice_combo.addItems(voices)
-            if current in voices:
-                self._voice_combo.setCurrentText(current)
-            self._voice_combo.blockSignals(False)
+            self._populate_voice_combo("local")
 
     def set_values(self, dark_mode: bool, asr_mode: str, steps: int,
                    cfg: float = 1.5,
                    enhanced_intent: bool = True, ai_polish: bool = True,
                    api_key: str = "", grok_api_key: str = "",
-                   engine: str = "local", grok_voice: str = "eve"):
+                   engine: str = "local", grok_voice: str = "eve",
+                   foundry_endpoint: str = "", foundry_api_key: str = "",
+                   foundry_voice: str = ""):
         self._dark_toggle.setChecked(dark_mode)
         self._intent_toggle.setChecked(enhanced_intent)
         self._polish_toggle.setChecked(ai_polish)
@@ -294,31 +344,23 @@ class SettingsPage(QWidget):
             self._api_key_input.setText(api_key)
         if grok_api_key:
             self._grok_key_input.setText(grok_api_key)
+        if foundry_endpoint:
+            self._foundry_endpoint_input.setText(foundry_endpoint)
+        if foundry_api_key:
+            self._foundry_key_input.setText(foundry_api_key)
 
         # Store voice state before triggering engine toggle
         self._grok_voice = grok_voice
+        if foundry_voice:
+            self._foundry_voice = foundry_voice
 
-        # Engine combo (triggers _on_engine_toggled which sets row visibility)
+        # Engine combo (signal blocked — we apply visibility manually below)
         self._engine_combo.blockSignals(True)
-        self._engine_combo.setCurrentIndex(1 if engine == "grok" else 0)
+        self._engine_combo.setCurrentIndex(self._ENGINE_TO_INDEX.get(engine, 0))
         self._engine_combo.blockSignals(False)
 
-        # Apply visibility manually since we blocked the signal
-        is_grok = engine == "grok"
-        self._row_grok_key.setVisible(is_grok)
-        self._row_asr.setVisible(not is_grok)
-        self._row_steps.setVisible(not is_grok)
-        self._row_cfg.setVisible(not is_grok)
-
-        # Populate voice combo for current engine
-        self._voice_combo.blockSignals(True)
-        self._voice_combo.clear()
-        if is_grok:
-            self._voice_combo.addItems(GROK_VOICES)
-            if grok_voice in GROK_VOICES:
-                self._voice_combo.setCurrentText(grok_voice)
-        # Local voices populated later via set_voices() once model loads
-        self._voice_combo.blockSignals(False)
+        self._apply_engine_visibility(engine)
+        self._populate_voice_combo(engine)
 
         self._asr_combo.blockSignals(True)
         self._asr_combo.setCurrentText(asr_mode)
@@ -332,3 +374,5 @@ class SettingsPage(QWidget):
         self._cfg_slider.setValue(cfg_int)
         self._cfg_label.setText(f"{cfg_int / 10.0:.1f}")
         self._cfg_slider.blockSignals(False)
+
+

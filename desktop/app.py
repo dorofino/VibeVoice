@@ -108,6 +108,9 @@ class VoiceDesktopApp(QObject):
             grok_api_key=self.settings.get("grok_api_key"),
             engine=self.settings.get("engine"),
             grok_voice=self.settings.get("grok_voice"),
+            foundry_endpoint=self.settings.get("foundry_endpoint"),
+            foundry_api_key=self.settings.get("foundry_api_key"),
+            foundry_voice=self.settings.get("foundry_voice"),
         )
         # Apply saved API key to text processor
         saved_key = self.settings.get("api_key")
@@ -145,6 +148,9 @@ class VoiceDesktopApp(QObject):
         self.settings_page.engine_changed.connect(self._on_engine_changed)
         self.settings_page.voice_changed.connect(self._on_voice_changed)
         self.settings_page.grok_voice_changed.connect(self._on_grok_voice_changed)
+        self.settings_page.foundry_endpoint_changed.connect(self._on_foundry_endpoint_changed)
+        self.settings_page.foundry_api_key_changed.connect(self._on_foundry_api_key_changed)
+        self.settings_page.foundry_voice_changed.connect(self._on_foundry_voice_changed)
         self.settings_page.asr_mode_changed.connect(self._on_asr_mode_changed)
         self.settings_page.steps_changed.connect(self._on_steps_changed)
         self.settings_page.cfg_changed.connect(self._on_cfg_changed)
@@ -161,7 +167,7 @@ class VoiceDesktopApp(QObject):
         self.tray.set_status("Loading models...")
 
         engine = self.settings.get("engine")
-        if engine == "grok":
+        if engine in ("grok", "foundry"):
             self.capsule.show_loading("Loading ASR model...")
         else:
             self.capsule.show_loading("Loading TTS model...")
@@ -173,7 +179,7 @@ class VoiceDesktopApp(QObject):
 
     def _load_models(self):
         engine = self.settings.get("engine")
-        if engine != "grok":
+        if engine == "local":
             self.tts_engine.load()
             self._invoke_on_main(lambda: self.capsule.update_loading("Loading ASR model..."))
         self.asr_engine.load()
@@ -195,16 +201,16 @@ class VoiceDesktopApp(QObject):
         self.tray.set_status("ASR ready")
         hotkey_asr = self.settings.get("hotkey_asr")
         self.hotkey_manager.register_asr(hotkey_asr)
-        # When engine is grok, TTS model wasn't loaded so _on_tts_ready
-        # never fires — register the TTS hotkey here instead.
-        if self.settings.get("engine") == "grok":
+        # When engine is grok or foundry, TTS model wasn't loaded so
+        # _on_tts_ready never fires — register the TTS hotkey here instead.
+        if self.settings.get("engine") in ("grok", "foundry"):
             hotkey_tts = self.settings.get("hotkey_tts")
             self.hotkey_manager.register_tts(hotkey_tts)
         self._check_all_ready()
 
     def _check_all_ready(self):
         engine = self.settings.get("engine")
-        tts_ok = self.tts_engine.is_loaded or engine == "grok"
+        tts_ok = self.tts_engine.is_loaded or engine in ("grok", "foundry")
         if tts_ok and self.asr_engine.is_loaded:
             self._models_ready = True
             hotkey_asr = self.settings.get("hotkey_asr")
@@ -396,6 +402,9 @@ class VoiceDesktopApp(QObject):
             cfg = self.settings.get("tts_cfg")
             grok_voice = self.settings.get("grok_voice")
             grok_key = ""
+            foundry_endpoint = ""
+            foundry_key = ""
+            foundry_voice = self.settings.get("foundry_voice")
             if engine == "grok":
                 grok_key = self.settings.get("grok_api_key")
                 if not grok_key:
@@ -405,13 +414,26 @@ class VoiceDesktopApp(QObject):
                     self._tts_active = False
                     self._invoke_on_main(self.capsule.hide_capsule)
                     return
-            print(f"[tts] engine={engine} grok_voice={grok_voice}")
+            elif engine == "foundry":
+                foundry_endpoint = self.settings.get("foundry_endpoint")
+                foundry_key = self.settings.get("foundry_api_key")
+                if not foundry_endpoint or not foundry_key:
+                    self._invoke_on_main(
+                        lambda: self._on_error("Foundry endpoint and API key not set. Add them in Settings.")
+                    )
+                    self._tts_active = False
+                    self._invoke_on_main(self.capsule.hide_capsule)
+                    return
+            print(f"[tts] engine={engine} grok_voice={grok_voice} foundry_voice={foundry_voice}")
             chunks = self.tts_engine.stream(
                 text, voice_key=voice, cfg_scale=cfg, inference_steps=steps,
-                mode=engine, grok_api_key=grok_key, grok_voice=grok_voice,
+                mode=engine,
+                grok_api_key=grok_key, grok_voice=grok_voice,
+                foundry_endpoint=foundry_endpoint, foundry_api_key=foundry_key,
+                foundry_voice=foundry_voice,
             )
-            # Grok REST API has its own latency — use shorter prebuffer
-            prebuf = 0.3 if engine == "grok" else None
+            # Cloud REST APIs have their own latency — use shorter prebuffer
+            prebuf = 0.3 if engine in ("grok", "foundry") else None
             self.audio_player.play_stream(chunks, **({"prebuffer_sec": prebuf} if prebuf else {}))
         except Exception as e:
             self._tts_active = False
@@ -464,6 +486,15 @@ class VoiceDesktopApp(QObject):
 
     def _on_grok_voice_changed(self, voice: str):
         self.settings.set("grok_voice", voice)
+
+    def _on_foundry_endpoint_changed(self, endpoint: str):
+        self.settings.set("foundry_endpoint", endpoint)
+
+    def _on_foundry_api_key_changed(self, key: str):
+        self.settings.set("foundry_api_key", key)
+
+    def _on_foundry_voice_changed(self, voice: str):
+        self.settings.set("foundry_voice", voice)
 
     def _on_asr_mode_changed(self, mode: str):
         self.settings.set("asr_mode", mode)
