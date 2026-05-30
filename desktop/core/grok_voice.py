@@ -131,20 +131,28 @@ def transcribe(
     api_key: str,
     sample_rate: int = 16_000,
 ) -> str:
-    """Send audio to Grok Realtime API and get text back."""
+    """Send audio to Grok Realtime API and get text back.
+
+    Grok Realtime is conversational — calling response.create would also
+    make the model reply (e.g. appending "What's up?" after the transcript).
+    Instead we enable input_audio_transcription and only consume the
+    input-transcription events, never triggering a response.
+    """
     ws = _connect_realtime(api_key)
     try:
-        # Configure session
+        # Configure session: enable input transcription, disable VAD/turn-taking.
         ws.send(json.dumps({
             "type": "session.update",
             "session": {
                 "turn_detection": None,
                 "audio": {
-                    "input": {"format": {"type": "audio/pcm", "rate": sample_rate}},
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": sample_rate},
+                        "transcription": {"model": "whisper-1"},
+                    },
                 },
             },
         }))
-        # Wait for session.updated
         while True:
             event = _recv_realtime(ws)
             if event.get("type") == "session.updated":
@@ -163,23 +171,33 @@ def transcribe(
             }))
 
         ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
-        ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text"]},
-        }))
 
-        # Collect text
+        # Wait only for the input-transcription events. Ignore any
+        # response.* events the server may still emit.
         text_parts = []
+        seen_types: list[str] = []
         while True:
             event = _recv_realtime(ws)
             etype = event.get("type", "")
-            if etype == "response.text.delta":
-                text_parts.append(event.get("delta", ""))
-            elif etype == "response.done":
+            seen_types.append(etype)
+            if "input_audio_transcription" not in etype:
+                # Skip response.text.delta and any other conversational reply
+                if etype == "error":
+                    raise RuntimeError(event.get("error", {}).get("message", str(event)))
+                continue
+            if etype.endswith(".delta"):
+                text_parts.append(event.get("delta", "") or event.get("transcript", ""))
+            elif etype.endswith(".completed"):
+                full = event.get("transcript") or event.get("text") or ""
+                if full and not text_parts:
+                    text_parts.append(full)
                 break
-            elif etype == "error":
+            elif etype.endswith(".failed"):
                 raise RuntimeError(event.get("error", {}).get("message", str(event)))
 
-        return "".join(text_parts).strip()
+        result = "".join(text_parts).strip()
+        if not result:
+            print(f"[grok-asr] empty result; events seen: {seen_types}")
+        return result
     finally:
         ws.close()

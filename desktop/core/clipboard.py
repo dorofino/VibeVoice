@@ -178,7 +178,11 @@ def insert_text(text: str, try_paste: bool = True):
             except Exception:
                 pass
         time.sleep(0.1)
-        try:
-            keyboard.send("ctrl+v")
-        except Exception:
-            _send_ctrl_v_win32()  # Paste failed but text is on clipboard
+        # SendInput is thread-agnostic; keyboard.send silently no-ops when
+        # called off the main thread. Prefer Win32 and fall back to keyboard
+        # only if SendInput rejects the events.
+        if not _send_ctrl_v_win32():
+            try:
+                keyboard.send("ctrl+v")
+            except Exception:
+                pass

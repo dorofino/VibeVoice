@@ -283,11 +283,20 @@ class VoiceDesktopApp(QObject):
     def _transcribe_and_insert(self, audio, duration: float):
         try:
             # Stage 1: Transcribe (always use local faster-whisper for ASR)
-            print("[pipeline] Transcribing...")
             self._invoke_on_main(self.capsule.show_transcribing)
             asr_mode = self.settings.get("asr_mode")
             hotword_list = self.hotwords.words
             grok_key = self.settings.get("grok_api_key") if asr_mode == "grok" else ""
+            try:
+                import numpy as _np
+                peak = float(_np.max(_np.abs(audio))) if audio.size else 0.0
+                rms = float(_np.sqrt(_np.mean(audio.astype(_np.float32) ** 2))) if audio.size else 0.0
+            except Exception:
+                peak, rms = -1.0, -1.0
+            print(
+                f"[pipeline] Transcribing mode={asr_mode} samples={audio.size} "
+                f"dur={duration:.2f}s peak={peak:.3f} rms={rms:.4f}"
+            )
             raw_text = self.asr_engine.transcribe(
                 audio, hotwords=hotword_list, mode=asr_mode, grok_api_key=grok_key,
             )
