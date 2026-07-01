@@ -167,22 +167,53 @@ class VoiceDesktopApp(QObject):
         self.tray.set_status("Loading models...")
 
         engine = self.settings.get("engine")
-        if engine in ("grok", "foundry"):
-            self.capsule.show_loading("Loading ASR model...")
-        else:
+        if engine == "local":
             self.capsule.show_loading("Loading TTS model...")
+        elif engine == "foundry":
+            self.capsule.show_loading("Loading ASR model...")
+        # grok: nothing to load locally — _finish_light_start shows ready
 
         self._load_thread = threading.Thread(target=self._load_models, daemon=True)
         self._load_thread.start()
 
         return self.qt_app.exec()
 
+    def _effective_asr_mode(self) -> str:
+        """Grok engine transcribes in the cloud; other engines use asr_mode."""
+        if self.settings.get("engine") == "grok":
+            return "grok"
+        return self.settings.get("asr_mode")
+
     def _load_models(self):
         engine = self.settings.get("engine")
+        asr_mode = self._effective_asr_mode()
+
         if engine == "local":
             self.tts_engine.load()
             self._invoke_on_main(lambda: self.capsule.update_loading("Loading ASR model..."))
-        self.asr_engine.load()
+
+        if asr_mode == "grok":
+            # Grok runs ASR in the cloud — no local model to load. Register
+            # hotkeys and mark ready immediately for a fast, light startup.
+            self._invoke_on_main(self._finish_light_start)
+        else:
+            self.asr_engine.load()
+
+    @pyqtSlot()
+    def _finish_light_start(self):
+        """Ready path when the active engine needs no local models (e.g. Grok)."""
+        self._models_ready = True
+        hotkey_asr = self.settings.get("hotkey_asr")
+        hotkey_tts = self.settings.get("hotkey_tts")
+        self.hotkey_manager.register_asr(hotkey_asr)
+        self.hotkey_manager.register_tts(hotkey_tts)
+        self.tray.set_status("Ready")
+        self.tray.showMessage(
+            APP_NAME,
+            f"Ready! Hold {hotkey_asr} to dictate, press {hotkey_tts} to read aloud.",
+            self.tray.icon(),
+        )
+        self.capsule.show_ready()
 
     @pyqtSlot()
     def _on_tts_ready(self):
@@ -232,9 +263,13 @@ class VoiceDesktopApp(QObject):
 
     @pyqtSlot()
     def _on_asr_start(self):
-        if not self.asr_engine.is_loaded:
-            return
         if self._asr_active:
+            return
+        if self._effective_asr_mode() == "grok":
+            if not self.settings.get("grok_api_key"):
+                self._on_error("Grok API key not set. Add it in Settings to dictate.")
+                return
+        elif not self.asr_engine.is_loaded:
             return
         self._asr_active = True
         self._recording_start_time = time.time()
@@ -284,7 +319,7 @@ class VoiceDesktopApp(QObject):
         try:
             # Stage 1: Transcribe (always use local faster-whisper for ASR)
             self._invoke_on_main(self.capsule.show_transcribing)
-            asr_mode = self.settings.get("asr_mode")
+            asr_mode = self._effective_asr_mode()
             hotword_list = self.hotwords.words
             grok_key = self.settings.get("grok_api_key") if asr_mode == "grok" else ""
             try:
@@ -485,10 +520,14 @@ class VoiceDesktopApp(QObject):
 
     def _on_engine_changed(self, engine: str):
         self.settings.set("engine", engine)
-        # Load local TTS model on demand when switching back to local
+        # Lazily load whatever local models the new engine needs. Grok needs
+        # nothing (cloud ASR + TTS); local also needs the VibeVoice TTS model;
+        # local/foundry need faster-whisper for ASR.
         if engine == "local" and not self.tts_engine.is_loaded:
             self.capsule.show_loading("Loading TTS model...")
             threading.Thread(target=self.tts_engine.load, daemon=True).start()
+        if engine != "grok" and not self.asr_engine.is_loaded:
+            threading.Thread(target=self.asr_engine.load, daemon=True).start()
 
     def _on_voice_changed(self, voice: str):
         self.settings.set("tts_voice", voice)
